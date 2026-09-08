@@ -98,7 +98,12 @@ class logconf_loss_fn(LossFnBase):
         preds = torch.softmax(logits, dim=-1)
         mean_weak = torch.mean(labels, dim=0)
         assert mean_weak.shape == (2,)
-        threshold = torch.quantile(preds[:, 0], mean_weak[1])
+        q_val = mean_weak[1]
+        if torch.isnan(q_val) or torch.isinf(q_val):
+            q = torch.tensor(0.5, device=preds.device)
+        else:
+            q = torch.clamp(q_val, 0.0001, 0.9999)
+        threshold = torch.quantile(preds[:, 0], q)
         strong_preds = torch.cat(
             [(preds[:, 0] >= threshold)[:, None], (preds[:, 0] < threshold)[:, None]],
             dim=1,

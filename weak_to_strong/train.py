@@ -9,7 +9,10 @@ import datasets
 import numpy as np
 import torch
 import torch_optimizer as toptim
-from transformers.modeling_utils import load_sharded_checkpoint
+try:
+    from transformers.modeling_utils import load_sharded_checkpoint
+except ImportError:
+    load_sharded_checkpoint = None
 
 import weak_to_strong.logger as logger
 from weak_to_strong.common import clear_mem
@@ -184,7 +187,11 @@ def train_and_save_model(
     lr_schedule: str = "constant",
     optimizer_name: str = "adam",
     eval_every: Optional[int] = None,
+    gradient_checkpointing: bool = False,
+    custom_kwargs: Optional[dict] = None,
 ):
+    inference_results = None
+
     if eval_batch_size is None:
         eval_batch_size = batch_size
 
@@ -228,7 +235,7 @@ def train_and_save_model(
     else:
         model = TransformerWithHead.from_pretrained(
             model_config.name, num_labels=2, linear_probe=linear_probe, **custom_kwargs
-        ).to("cuda")
+        ).to("cuda" if torch.cuda.is_available() else "cpu")
         already_trained = maybe_load_model(model)
         # data parallel:  currently not supported with model parallel
 
@@ -267,32 +274,33 @@ def train_and_save_model(
         )
         print("Model training took", time.time() - start, "seconds")
         if save_path:
-            # Note: If the model is wrapped by DataParallel, we need to unwrap it before saving
-            (model if hasattr(model, "save_pretrained") else model.module).save_pretrained(
-                save_path
-            )
+            os.makedirs(save_path, exist_ok=True)
+            save_obj = model if hasattr(model, "save_pretrained") else model.module
+            try:
+                save_obj.save_pretrained(save_path, safe_serialization=False)
+            except Exception:
+                torch.save(save_obj.state_dict(), os.path.join(save_path, "pytorch_model.bin"))
             print("saved", save_path)
 
-    inference_results = None
-    if inference_ds:
-        inference_results = eval_model_acc(model, inference_ds, eval_batch_size)
-        logger.logkv("inference_accuracy", np.mean([r["acc"] for r in inference_results]))
+        inference_results = None
+        if inference_ds:
+            inference_results = eval_model_acc(model, inference_ds, eval_batch_size)
+            if inference_results:
+                logger.logkv("inference_accuracy", np.mean([r["acc"] for r in inference_results]))
 
-    if save_path:
-        with open(os.path.join(save_path, "results.pkl"), "wb") as f:
-            pickle.dump(
-                {
-                    "avg_acc_test": float(np.mean([r["acc"] for r in test_results])),
-                    "avg_acc_inference": float(
-                        np.mean([r["acc"] for r in inference_results] if inference_results else [])
-                    ),
-                    "test_results": test_results,
-                    "inference_results": inference_results if inference_results else [],
-                },
-                f,
-            )
-    # try to clean up memory
-    clear_mem()
-    logger.shutdown()
+        if save_path:
+            with open(os.path.join(save_path, "results.pkl"), "wb") as f:
+                pickle.dump(
+                    {
+                        "avg_acc_test": float(np.mean([r["acc"] for r in test_results])) if test_results else 0.0,
+                        "avg_acc_inference": float(
+                            np.mean([r["acc"] for r in inference_results]) if inference_results else 0.0
+                        ),
+                        "test_results": test_results,
+                    },
+                    f,
+                )
+        clear_mem()
+        logger.shutdown()
 
-    return test_results, inference_results
+        return test_results, inference_results
