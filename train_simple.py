@@ -181,6 +181,7 @@ def main(
     epochs: int = 2,
     force_retrain: bool = False,
     seed: int = 0,
+    label_flip_rate: float = 0.0,
     minibatch_size_per_device: Optional[float] = None,
     train_with_dropout: bool = False,
     results_folder: str = "/tmp/results",
@@ -197,6 +198,7 @@ def main(
     # still do final evals (which requires eval_every to be set to a non-zero, non-None value)
     eval_every: int = 1000000,
     sync_command: Optional[str] = None,
+    **kwargs,
 ):
     # this is per device!
     if minibatch_size_per_device is None:
@@ -262,6 +264,21 @@ def main(
 
     # Split the training dataset in half
     train_dataset, test_ds = dataset["train"], dataset["test"]
+
+    if label_flip_rate > 0.0:
+        print(f"\n>>> INJECTING {label_flip_rate * 100:.1f}% RANDOM LABEL NOISE <<<\n")
+
+        def corrupt_fn(ex):
+            if random.random() < label_flip_rate:
+                if "hard_label" in ex:
+                    ex["hard_label"] = 1 - ex["hard_label"]
+                if "soft_pred" in ex:
+                    ex["soft_pred"] = 1.0 - ex["soft_pred"]
+                if "soft_label" in ex and ex["soft_label"] is not None:
+                    ex["soft_label"] = [1.0 - p for p in ex["soft_label"]]
+            return ex
+
+        train_dataset = train_dataset.map(corrupt_fn, load_from_cache_file=False)
 
     if weak_labels_path is None:
         split_data = train_dataset.train_test_split(test_size=0.5, seed=seed)
