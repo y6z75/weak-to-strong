@@ -1,0 +1,14 @@
+Weak Supervisor,Strong Student,Weak Acc,Student Acc,Strong Ceiling,PGR
+pythia,gpt2,0.528,0.59,0.65,0.5082
+pythia,pythia,0.528,0.59,0.528,N/A
+pythia,pythia,0.528,0.528,0.528,N/A
+gpt2,gpt2,0.65,0.535,0.65,N/A
+gpt2,gpt2,0.65,0.55,0.65,N/A
+pythia,gpt2,0.528,0.59,0.65,0.5082
+gpt2,gpt2,0.65,0.612,0.65,N/A
+gpt2,gpt2,0.65,0.62,0.65,N/A
+pythia,gpt2,0.528,0.528,0.65,0.0
+gpt2,gpt2,0.65,0.55,0.65,N/A
+pythia,gpt2,0.528,0.59,0.65,0.5082
+gpt2,gpt2,0.65,0.6,0.65,N/A
+pythia,gpt2,0.528,0.528,0.65,0.0

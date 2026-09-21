@@ -107,7 +107,7 @@ def format_sciq(ex, rng):
 
 register_dataset(
     "sciq",
-    DatasetConfig(loader=hf_loader("sciq"), formatter=format_sciq),
+    DatasetConfig(loader=hf_loader("allenai/sciq"), formatter=format_sciq),
 )
 
 

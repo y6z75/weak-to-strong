@@ -19,6 +19,31 @@ from weak_to_strong.train import ModelConfig, train_and_save_model
 # NOTE learning rates are not particularly tuned, work somewhat reasonably at train batch size 32
 MODEL_CONFIGS = [
     ModelConfig(
+        name="EleutherAI/pythia-70m",
+        default_lr=1e-4,
+        eval_batch_size=2,
+        model_parallel=False,
+    ),
+    ModelConfig(
+        name="pythia-70m",
+        default_lr=1e-4,
+        eval_batch_size=2,
+        model_parallel=False,
+        custom_kwargs={"name": "EleutherAI/pythia-70m"},
+    ),
+    ModelConfig(
+        name="EleutherAI/pythia-160m",
+        default_lr=1e-4,
+        eval_batch_size=2,
+        model_parallel=False,
+    ),
+    ModelConfig(
+        name="EleutherAI/pythia-410m",
+        default_lr=1e-4,
+        eval_batch_size=2,
+        model_parallel=False,
+    ),
+    ModelConfig(
         name="gpt2",
         default_lr=5e-5,
         eval_batch_size=32,
@@ -42,7 +67,8 @@ MODEL_CONFIGS = [
         # but if you have multiple it won't run without model_parallel because of the overhead of data
         # parallel training).
         model_parallel=(
-            torch.cuda.get_device_properties(0).total_memory < 35e9
+            torch.cuda.is_available()
+            and torch.cuda.get_device_properties(0).total_memory < 35e9
             and torch.cuda.device_count() > 1
         ),
     ),
@@ -51,14 +77,15 @@ MODEL_CONFIGS = [
         default_lr=1e-5,
         eval_batch_size=2,
         gradient_checkpointing=True,
-        model_parallel=(
-            torch.cuda.get_device_properties(0).total_memory < 35e9
+       model_parallel=(
+            torch.cuda.is_available()
+            and torch.cuda.get_device_properties(0).total_memory < 35e9
             and torch.cuda.device_count() > 1
         ),
         custom_kwargs={
             "trust_remote_code": True,
-            "bf16": torch.cuda.is_bf16_supported(),
-            "fp32": not torch.cuda.is_bf16_supported(),
+            "bf16": torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+	    "fp32": not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()),
             "revision": "5fde88dff770a7d036847211f5d9d9705f0caa69",
         },
     ),
@@ -71,8 +98,8 @@ MODEL_CONFIGS = [
         # note: you will probably not be able to run this without many gpus
         custom_kwargs={
             "trust_remote_code": True,
-            "bf16": torch.cuda.is_bf16_supported(),
-            "fp32": not torch.cuda.is_bf16_supported(),
+	    "bf16": torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+	    "fp32": not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()),
             "revision": "d4efd21e866b9cb3466cb65b963933f5e98016d1",
         },
     ),
@@ -85,8 +112,8 @@ MODEL_CONFIGS = [
         # note: you will probably not be able to run this bf16 support and without many gpus
         custom_kwargs={
             "trust_remote_code": True,
-            "bf16": torch.cuda.is_bf16_supported(),
-            "fp32": not torch.cuda.is_bf16_supported(),
+            "bf16": torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+	    "fp32": not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()),
             "revision": "8be2854218fea9054331e217fd26a06f3fd02004",
         },
     ),
@@ -99,8 +126,8 @@ MODEL_CONFIGS = [
         # note: you will probably not be able to run this without bf16 support and many gpus
         custom_kwargs={
             "trust_remote_code": True,
-            "bf16": torch.cuda.is_bf16_supported(),
-            "fp32": not torch.cuda.is_bf16_supported(),
+            "bf16": torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+	    "fp32": not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()),
             "revision": "fec78c0e3b3b10dd9f0ce775c34a686a3255a7d1",
         },
         # This model is really big, save space by using adafactor.
@@ -154,6 +181,7 @@ def main(
     epochs: int = 2,
     force_retrain: bool = False,
     seed: int = 0,
+    label_flip_rate: float = 0.0,
     minibatch_size_per_device: Optional[float] = None,
     train_with_dropout: bool = False,
     results_folder: str = "/tmp/results",
@@ -170,6 +198,7 @@ def main(
     # still do final evals (which requires eval_every to be set to a non-zero, non-None value)
     eval_every: int = 1000000,
     sync_command: Optional[str] = None,
+    **kwargs,
 ):
     # this is per device!
     if minibatch_size_per_device is None:
@@ -235,6 +264,21 @@ def main(
 
     # Split the training dataset in half
     train_dataset, test_ds = dataset["train"], dataset["test"]
+
+    if label_flip_rate > 0.0:
+        print(f"\n>>> INJECTING {label_flip_rate * 100:.1f}% RANDOM LABEL NOISE <<<\n")
+
+        def corrupt_fn(ex):
+            if random.random() < label_flip_rate:
+                if "hard_label" in ex:
+                    ex["hard_label"] = 1 - ex["hard_label"]
+                if "soft_pred" in ex:
+                    ex["soft_pred"] = 1.0 - ex["soft_pred"]
+                if "soft_label" in ex and ex["soft_label"] is not None:
+                    ex["soft_label"] = [1.0 - p for p in ex["soft_label"]]
+            return ex
+
+        train_dataset = train_dataset.map(corrupt_fn, load_from_cache_file=False)
 
     if weak_labels_path is None:
         split_data = train_dataset.train_test_split(test_size=0.5, seed=seed)
